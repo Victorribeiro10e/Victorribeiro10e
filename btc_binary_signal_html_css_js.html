@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BTC Binary Signal — HTML + CSS + JS</title>
+  <style>
+    :root{ --bg:#0B1020; --card:#071029; --accent:#60a5fa; --good:#10b981; --bad:#fb7185; --muted:#94a3b8 }
+    *{box-sizing:border-box}
+    body{margin:0; font-family:Inter,system-ui,Arial; background:linear-gradient(180deg,#041022 0%, #071024 100%); color:#e6eef8; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px}
+    .wrap{width:980px; max-width:96vw; border-radius:12px; padding:18px; background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); box-shadow:0 8px 30px rgba(2,6,23,0.6)}
+    header{display:flex; align-items:center; justify-content:space-between; gap:12px}
+    header h1{font-size:18px;margin:0}
+    .controls{display:flex; gap:8px; align-items:center; margin-top:12px}
+    input, select{padding:8px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.04); background:transparent; color:inherit}
+    button{padding:8px 12px; border-radius:10px; border:0; cursor:pointer; font-weight:600}
+    .btn-primary{background:var(--accent); color:#032033}
+    .layout{display:grid; grid-template-columns:1fr 340px; gap:16px; margin-top:16px}
+    .card{background:rgba(255,255,255,0.02); padding:14px; border-radius:10px}
+    .price{font-size:28px; font-weight:700}
+    .signal{font-size:20px; font-weight:800; padding:8px 12px; border-radius:8px; display:inline-block}
+    .features{display:grid; gap:6px; margin-top:8px}
+    table{width:100%; border-collapse:collapse; font-family:monospace}
+    th, td{padding:6px 8px; text-align:left; border-bottom:1px dashed rgba(255,255,255,0.03)}
+    .small{font-size:13px; color:var(--muted)}
+    .footer{margin-top:12px; display:flex; justify-content:space-between; align-items:center}
+    a.link{color:var(--accent); text-decoration:none}
+    @media(max-width:920px){ .layout{grid-template-columns:1fr} }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>BTC Binary Signal</h1>
+        <div class="small">Sinal binário simples gerado no navegador (0 = Não Comprar, 1 = Comprar). Dados via CoinGecko.</div>
+      </div>
+      <div class="small">Última atualização em <span id="lastUpdate">—</span></div>
+    </header>
+
+    <div class="controls">
+      <label class="small">Período:
+        <select id="daysSel">
+          <option value="30">30 dias</option>
+          <option value="60">60 dias</option>
+          <option value="90" selected>90 dias</option>
+          <option value="180">180 dias</option>
+        </select>
+      </label>
+      <label class="small">Horizon (dias):
+        <select id="horizonSel">
+          <option value="1">1</option>
+          <option value="3">3</option>
+          <option value="5">5</option>
+        </select>
+      </label>
+      <button id="refreshBtn" class="btn-primary">Atualizar sinal</button>
+      <button id="explainBtn" class="btn-ghost">Explicar regra</button>
+    </div>
+
+    <div class="layout">
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px">
+          <div>
+            <div class="small">Preço (USD)</div>
+            <div class="price" id="price">—</div>
+            <div class="small">Variação 24h: <span id="ret24">—</span></div>
+          </div>
+          <div style="text-align:right">
+            <div class="small">Sinal binário</div>
+            <div id="signalBadge" class="signal">—</div>
+          </div>
+        </div>
+
+        <div class="features">
+          <div class="small">Features calculadas:</div>
+          <table>
+            <tbody id="featuresTable">
+              <tr><th>Nome</th><th>Valor</th></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="footer">
+          <div class="small">Fonte: <a class="link" href="https://www.coingecko.com/" target="_blank">CoinGecko API</a></div>
+          <div class="small">Disclaimer: demonstrativo; não é aconselhamento financeiro.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <strong>Logs</strong>
+        <div id="log" style="margin-top:8px; font-family:monospace; max-height:300px; overflow:auto; font-size:13px">Pronto. Clique "Atualizar sinal".</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+// Simple BTC binary signal in pure JS (runs in user's browser)
+// Rules used (configurable in code):
+//  - compute MA5, MA10, MA21, returns and volatility
+//  - Signal=1 (buy) if: (MA5 > MA10) AND (ret_1 > 0) AND (volatility small enough)
+// This is intentionally simple and deterministic so you can inspect/modify easily.
+
+const $ = id => document.getElementById(id);
+const log = (s)=>{ const el = $('log'); const p = document.createElement('div'); p.textContent = `[${new Date().toLocaleTimeString()}] ${s}`; el.prepend(p); }
+
+async function fetchBTC(days=90){
+  // CoinGecko market_chart endpoint (daily prices)
+  const url = `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${days}&interval=daily`;
+  const res = await fetch(url);
+  if(!res.ok) throw new Error('Falha ao buscar dados CoinGecko: '+res.status);
+  const data = await res.json();
+  // data.prices is array [[ts, price], ...]
+  return data;
+}
+
+function toSeries(prices){
+  // prices = [[ts,price],...]
+  return prices.map(p => ({ date: new Date(p[0]), close: p[1] }));
+}
+
+function addFeatures(series){
+  // compute returns, moving averages, volatility
+  const arr = series.map(s=>s.close);
+  const n = arr.length;
+  const ret = new Array(n).fill(null);
+  for(let i=1;i<n;i++) ret[i] = (arr[i]-arr[i-1])/arr[i-1];
+
+  function ma(window){
+    const out = new Array(n).fill(null);
+    for(let i=0;i<n;i++){
+      if(i+1>=window){
+        const slice = arr.slice(i+1-window,i+1);
+        out[i] = slice.reduce((a,b)=>a+b,0)/window;
+      }
+    }
+    return out;
+  }
+  function std(window){
+    const out = new Array(n).fill(null);
+    for(let i=0;i<n;i++){
+      if(i+1>=window){
+        const slice = arr.slice(i+1-window,i+1);
+        const mean = slice.reduce((a,b)=>a+b,0)/window;
+        const s2 = slice.reduce((a,b)=>a + Math.pow(b-mean,2),0)/window;
+        out[i] = Math.sqrt(s2);
+      }
+    }
+    return out;
+  }
+
+  const ma5 = ma(5), ma10 = ma(10), ma21 = ma(21);
+  const vol7 = std(7).map((v,i)=> v===null ? null : (ret[i]===null?null:v));
+
+  const out = series.map((s,i)=>({
+    date: s.date,
+    close: s.close,
+    ret_1: ret[i],
+    ma5: ma5[i],
+    ma10: ma10[i],
+    ma21: ma21[i],
+    vol7: vol7[i]
+  }));
+  return out;
+}
+
+function computeSignal(latest, config){
+  // config contains thresholds
+  // rule: buy if ma5 > ma10, and ret_1 > 0, and vol7 < volThresh
+  const cond1 = latest.ma5 !== null && latest.ma10 !== null && latest.ma5 > latest.ma10;
+  const cond2 = latest.ret_1 !== null && latest.ret_1 > 0;
+  const cond3 = latest.vol7 !== null && latest.vol7 < config.volThresh;
+  const score = (cond1?1:0) + (cond2?1:0) + (cond3?1:0);
+  const prob = score / 3; // 0..1
+  const signal = prob >= config.probThresh ? 1 : 0;
+  return { signal, prob, score, cond1, cond2, cond3 };
+}
+
+async function update(){
+  try{
+    const days = Number($('daysSel').value);
+    const horizon = Number($('horizonSel').value); // currently unused but kept for UI
+    log('Buscando preços BTC para ' + days + ' dias...');
+    const data = await fetchBTC(days);
+    const series = toSeries(data.prices);
+    const feat = addFeatures(series);
+    const latest = feat[feat.length-1];
+    const prev = feat[feat.length-2] || latest;
+
+    const config = { volThresh: 0.05, probThresh: 0.66 };
+    const sig = computeSignal(latest, config);
+
+    $('price').textContent = latest.close.toLocaleString(undefined,{style:'currency', currency:'USD', maximumFractionDigits:0});
+    const ret24 = latest.ret_1 !== null ? (latest.ret_1*100).toFixed(2) + '%' : '—';
+    $('ret24').textContent = ret24;
+    $('lastUpdate').textContent = latest.date.toLocaleString();
+
+    const badge = $('signalBadge');
+    if(sig.signal===1){ badge.textContent = '1 — BUY'; badge.style.background = 'var(--good)'; badge.style.color='#022'; }
+    else { badge.textContent = '0 — HOLD'; badge.style.background = 'var(--bad)'; badge.style.color='#220'; }
+
+    // features table
+    const table = $('featuresTable');
+    table.innerHTML = '<tr><th>Nome</th><th>Valor</th></tr>' +
+      `<tr><td>MA5</td><td>${latest.ma5 ? latest.ma5.toFixed(2) : '—'}</td></tr>`+
+      `<tr><td>MA10</td><td>${latest.ma10 ? latest.ma10.toFixed(2) : '—'}</td></tr>`+
+      `<tr><td>MA21</td><td>${latest.ma21 ? latest.ma21.toFixed(2) : '—'}</td></tr>`+
+      `<tr><td>Ret 1d</td><td>${latest.ret_1 ? (latest.ret_1*100).toFixed(2)+'%' : '—'}</td></tr>`+
+      `<tr><td>Vol7 (std)</td><td>${latest.vol7 ? latest.vol7.toFixed(4) : '—'}</td></tr>`+
+      `<tr><td>Score</td><td>${sig.score} / 3 (prob ${sig.prob.toFixed(2)})</td></tr>`;
+
+    log(`Sinal calculado: ${sig.signal} (prob ${sig.prob.toFixed(2)}). Regras: MA5>MA10=${sig.cond1}, Ret>0=${sig.cond2}, Vol ok=${sig.cond3}`);
+  }catch(err){
+    log('Erro: '+err.message);
+    console.error(err);
+  }
+}
+
+// events
+$('refreshBtn').addEventListener('click', ()=>update());
+$('explainBtn').addEventListener('click', ()=>{
+  alert('Regra simples:\n1) MA5 > MA10\n2) Retorno diário > 0\n3) Volatilidade 7 dias abaixo do limiar\nSinal=1 se pelo menos 2/3 condições forem verdadeiras (prob>=0.66)');
+});
+
+// initial
+update();
+
+</script>
+</body>
+</html>
