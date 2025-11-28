@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Chat Secreto em Binário</title>
+<style>
+  :root{
+    --bg:#0b1220; --card:#0f1724; --accent:#00d084; --muted:#9aa4b2;
+    --glass: rgba(255,255,255,0.03);
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  }
+  body{
+    margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(180deg,#05060a 0%,#07101a 100%); color:#e6eef6;
+    padding:20px;
+  }
+  .app{
+    width:100%; max-width:1100px; display:grid; grid-template-columns:1fr 1fr; gap:20px;
+  }
+  h1{font-size:20px; margin:0 0 12px 0; color:var(--accent)}
+  .panel{
+    background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+    border-radius:12px; padding:16px; box-shadow:0 6px 18px rgba(0,0,0,0.6); border:1px solid rgba(255,255,255,0.03);
+    display:flex; flex-direction:column; gap:12px;
+  }
+
+  .chat-window{ flex:1; overflow:auto; padding:8px; background:var(--glass); border-radius:8px; min-height:300px; }
+  .msg{ margin:8px 0; display:flex; gap:10px; align-items:flex-end; }
+  .bubble{ padding:10px 12px; border-radius:10px; max-width:80%; line-height:1.3; word-break:break-word; }
+  .left .bubble{ background:#142032; color:#dff8ea; border-top-left-radius:2px; align-self:flex-start; }
+  .right{ justify-content:flex-end; }
+  .right .bubble{ background: linear-gradient(90deg, #013e2a, #006b45); color: white; border-top-right-radius:2px; align-self:flex-end; }
+  .bin { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace; font-size:12px; opacity:0.85; margin-top:6px; }
+  textarea{ width:100%; min-height:72px; resize:vertical; background:#071420; color:#e6eef6; border:1px solid rgba(255,255,255,0.03); padding:10px; border-radius:8px; font-size:14px; font-family:inherit; }
+  .controls{ display:flex; gap:8px; flex-wrap:wrap; }
+  button{ background:var(--accent); color:#022; border:none; padding:10px 12px; border-radius:8px; cursor:pointer; font-weight:600; }
+  button.secondary{ background:transparent; color:var(--muted); border:1px solid rgba(255,255,255,0.04); }
+  .small{ padding:8px 10px; font-size:13px; }
+  .meta{ display:flex; gap:8px; align-items:center; color:var(--muted); font-size:13px; }
+  .row{ display:flex; gap:8px; align-items:center; }
+  .logs{ font-family:ui-monospace,monospace; font-size:13px; color:var(--muted); white-space:pre-wrap; max-height:110px; overflow:auto; background:transparent; padding:6px; border-radius:6px;}
+  .footer-note{ font-size:12px; color:var(--muted); text-align:center; }
+  @media(max-width:880px){ .app{ grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+  <div class="app">
+    <!-- LADO A -->
+    <div class="panel" id="panelA">
+      <h1>Usuário A — Enviar</h1>
+
+      <div class="meta">
+        <div>Digite sua mensagem (texto):</div>
+      </div>
+
+      <textarea id="inputA" placeholder="Escreva algo secreto..."></textarea>
+
+      <div class="controls">
+        <button id="encodeSendA">Converter & Enviar</button>
+        <button class="secondary small" id="copyBinA">Copiar Binário</button>
+        <button class="secondary small" id="clearA">Limpar</button>
+      </div>
+
+      <div class="meta"><div>Binário gerado:</div></div>
+      <div class="logs" id="binOutA">— aqui aparecerá o binário —</div>
+
+      <div class="meta"><div>Histórico (A):</div></div>
+      <div class="chat-window" id="chatA"></div>
+    </div>
+
+    <!-- LADO B -->
+    <div class="panel" id="panelB">
+      <h1>Usuário B — Receber / Responder</h1>
+
+      <div class="meta"><div>Cole o binário recebido (ou digite texto para enviar):</div></div>
+      <textarea id="inputB" placeholder="Cole o binário aqui para decodificar..."></textarea>
+
+      <div class="controls">
+        <button id="decodeRecvB">Decodificar e Receber</button>
+        <button id="encodeSendB" class="">Escrever & Enviar Texto</button>
+        <button class="secondary small" id="copyBinB">Copiar Binário</button>
+        <button class="secondary small" id="clearB">Limpar</button>
+      </div>
+
+      <div class="meta"><div>Binário / Texto:</div></div>
+      <div class="logs" id="binOutB">— aqui aparecerá o resultado —</div>
+
+      <div class="meta"><div>Histórico (B):</div></div>
+      <div class="chat-window" id="chatB"></div>
+    </div>
+  </div>
+
+<script>
+/* ---------- Funções de conversão ---------- */
+function textToBinary(str) {
+  // converte cada caractere em 8 bits (ASCII / Unicode code point truncated to 8 bits)
+  const bytes = [];
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    // Se quiser suportar full Unicode (acima de 255), seria necessário UTF-8. Aqui usamos 8 bits por caractere simples.
+    const b = (code & 0xFF).toString(2).padStart(8, '0');
+    bytes.push(b);
+  }
+  return bytes.join(' ');
+}
+
+function binaryToText(bin) {
+  // aceita espaços, quebras de linha; valida grupos de 8 bits
+  const cleaned = bin.replace(/[^
+\s01]/g, '').trim();
+  if (cleaned.length === 0) return '';
+  // separar por espaços (ou por 8 em 8 se o usuário não usou espaços)
+  let parts = cleaned.split(/\s+/);
+  // se houver apenas um bloco e o comprimento for múltiplo de 8, dividir em octetos
+  if (parts.length === 1 && cleaned.length % 8 === 0) {
+    parts = [];
+    for (let i = 0; i < cleaned.length; i += 8) parts.push(cleaned.slice(i, i+8));
+  }
+  let out = '';
+  for (const p of parts) {
+    if (p.length !== 8 || /[^01]/.test(p)) {
+      // caso inválido, tentar ser permissivo: ignorar blocos errados
+      return { error: `Bloco inválido detectado: "${p}". Cada bloco deve ter exatamente 8 bits.` };
+    }
+    const code = parseInt(p, 2);
+    out += String.fromCharCode(code);
+  }
+  return { text: out };
+}
+
+/* ---------- Elementos ---------- */
+const inputA = document.getElementById('inputA');
+const binOutA = document.getElementById('binOutA');
+const chatA = document.getElementById('chatA');
+const encodeSendA = document.getElementById('encodeSendA');
+const copyBinA = document.getElementById('copyBinA');
+const clearA = document.getElementById('clearA');
+
+const inputB = document.getElementById('inputB');
+const binOutB = document.getElementById('binOutB');
+const chatB = document.getElementById('chatB');
+const decodeRecvB = document.getElementById('decodeRecvB');
+const encodeSendB = document.getElementById('encodeSendB');
+const copyBinB = document.getElementById('copyBinB');
+const clearB = document.getElementById('clearB');
+
+/* ---------- Utilitários de UI ---------- */
+function appendMessage(side, text, bin) {
+  // side: 'A' or 'B' (left vs right)
+  const wrapper = document.createElement('div');
+  wrapper.className = 'msg ' + (side === 'A' ? 'left' : 'right');
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  const p1 = document.createElement('div');
+  p1.textContent = text;
+  const p2 = document.createElement('div');
+  p2.className = 'bin';
+  p2.textContent = bin;
+  bubble.appendChild(p1);
+  bubble.appendChild(p2);
+  wrapper.appendChild(bubble);
+
+  if (side === 'A') { chatA.appendChild(wrapper); chatA.scrollTop = chatA.scrollHeight; }
+  else { chatB.appendChild(wrapper); chatB.scrollTop = chatB.scrollHeight; }
+}
+
+/* ---------- Ações (Lado A) ---------- */
+encodeSendA.addEventListener('click', () => {
+  const text = inputA.value.trim();
+  if (!text) { alert('Escreva uma mensagem para enviar.'); return; }
+  const bin = textToBinary(text);
+  // mostra binário na área A
+  binOutA.textContent = bin;
+  // adiciona mensagem ao histórico A
+  appendMessage('A', text, bin);
+  // opcional: "enviar" para B — aqui colocamos o binário automático no campo B para simular envio
+  inputB.value = bin;
+  binOutB.textContent = 'Binário recebido (cole aqui e clique em "Decodificar e Receber"), ou clique "Decodificar e Receber" agora.';
+});
+
+copyBinA.addEventListener('click', async () => {
+  const bin = binOutA.textContent;
+  if (!bin || bin.includes('—')) return alert('Não há binário para copiar.');
+  await navigator.clipboard.writeText(bin);
+  alert('Binário copiado para a área de transferência.');
+});
+
+clearA.addEventListener('click', () => {
+  inputA.value = '';
+  binOutA.textContent = '— aqui aparecerá o binário —';
+});
+
+/* ---------- B: Decodificar / Responder ---------- */
+decodeRecvB.addEventListener('click', () => {
+  const bin = inputB.value.trim();
+  if (!bin) { alert('Cole o binário recebido no campo acima.'); return; }
+  const res = binaryToText(bin);
+  if (res.error) {
+    binOutB.textContent = 'Erro: ' + res.error;
+    return;
+  }
+  // mostrar o texto decodificado e adicionar ao histórico B
+  binOutB.textContent = `Texto decodificado: "${res.text}"`;
+  appendMessage('B', res.text, bin);
+});
+
+encodeSendB.addEventListener('click', () => {
+  // caso o usuário queira digitar texto diretamente no lado B e enviar de volta
+  const text = inputB.value.trim();
+  if (!text) { alert('Digite texto (ou cole binário) no campo para enviar como texto.'); return; }
+  // se o campo tiver apenas 0/1 e espaços, perguntar se quer decodificar — mas por simplicidade, se tiver letras, vamos enviar
+  // converter texto para binário (resposta)
+  const bin = textToBinary(text);
+  binOutB.textContent = bin;
+  appendMessage('B', text, bin);
+  // simula envio: coloca o binário no campo A (para "receber" A)
+  inputA.value = bin;
+  binOutA.textContent = 'Binário recebido (no campo A). Clique "Converter & Enviar" para enviar do A se quiser simular ida-volta.';
+});
+
+copyBinB.addEventListener('click', async () => {
+  const bin = binOutB.textContent;
+  if (!bin || bin.includes('—')) return alert('Não há binário para copiar.');
+  await navigator.clipboard.writeText(bin);
+  alert('Binário copiado para a área de transferência.');
+});
+
+clearB.addEventListener('click', () => {
+  inputB.value = '';
+  binOutB.textContent = '— aqui aparecerá o resultado —';
+});
+
+/* ---------- Atalhos: colar binário automático ao abrir (não necessário) ---------- */
+// nada por enquanto
+
+/* ---------- Mensagem de boas-vindas no chat ---------- */
+appendMessage('A', 'Iniciando conversa (A): "Olá!"', textToBinary('Olá!'));
+appendMessage('B', 'Iniciando conversa (B): "Oi, tudo bem?"', textToBinary('Oi, tudo bem?'));
+</script>
+
+</body>
+</html>
